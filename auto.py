@@ -687,12 +687,12 @@ def _resolve_tenant_id(cli_value: Optional[str]) -> str:
     return (
         cli_value
         or os.getenv("AGENT_DASHBOARD_TENANT_ID")
-        or "study-agent-sf23jj56c34234"
+        or "default-tenant"
     )
 
 
 def _resolve_project_id(cli_value: Optional[str]) -> str:
-    return cli_value or os.getenv("AGENT_DASHBOARD_PROJECT_ID") or "gmail"
+    return cli_value or os.getenv("AGENT_DASHBOARD_PROJECT_ID") or "default-project"
 
 
 def _combine_exporters(primary, secondary):

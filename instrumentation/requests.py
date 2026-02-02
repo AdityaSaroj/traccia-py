@@ -25,9 +25,10 @@ def patch_requests() -> bool:
         return True
 
     def wrapped_request(self, method, url, *args, **kwargs):
-        # Skip instrumentation for OTLP exporter endpoints to prevent feedback loop
+        # Skip instrumentation for trace ingestion endpoints to prevent feedback loop
         url_str = str(url) if url else ""
-        if "/v1/traces" in url_str or "/api/v1/traces" in url_str:
+        ingestion_paths = ["/v1/traces", "/v2/traces", "/api/v1/traces", "/api/v2/traces"]
+        if any(path in url_str for path in ingestion_paths):
             # This is likely an exporter endpoint - don't instrument it
             import requests
             return original_request(self, method, url, *args, **kwargs)
