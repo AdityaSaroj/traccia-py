@@ -34,6 +34,7 @@ ENV_VAR_MAPPING = {
     "auto_instrument_tools": ["TRACCIA_AUTO_INSTRUMENT_TOOLS"],
     "max_tool_spans": ["TRACCIA_MAX_TOOL_SPANS"],
     "max_span_depth": ["TRACCIA_MAX_SPAN_DEPTH"],
+    "openai_agents": ["TRACCIA_OPENAI_AGENTS"],
     
     # Rate limiting & Batching
     "max_spans_per_second": ["TRACCIA_MAX_SPANS_PER_SECOND"],
@@ -160,6 +161,10 @@ class InstrumentationConfig(BaseModel):
         default=10,
         gt=0,
         description="Maximum depth of nested spans"
+    )
+    openai_agents: bool = Field(
+        default=True,
+        description="Auto-install OpenAI Agents SDK integration when available"
     )
 
 
@@ -299,6 +304,7 @@ class TracciaConfig(BaseModel):
             "auto_instrument_tools": self.instrumentation.auto_instrument_tools,
             "max_tool_spans": self.instrumentation.max_tool_spans,
             "max_span_depth": self.instrumentation.max_span_depth,
+            "openai_agents": self.instrumentation.openai_agents,
             # Rate limiting & Batching
             "max_spans_per_second": self.rate_limiting.max_spans_per_second,
             "max_queue_size": self.rate_limiting.max_queue_size,
@@ -460,7 +466,7 @@ def load_config_from_env(flat: bool = False) -> Dict[str, Any]:
                 env_config["exporters"][key] = value
     
     # Instrumentation section
-    for key in ["enable_patching", "enable_token_counting", "enable_costs", "auto_instrument_tools"]:
+    for key in ["enable_patching", "enable_token_counting", "enable_costs", "auto_instrument_tools", "openai_agents"]:
         value = get_env_value(key)
         if value is not None:
             env_config["instrumentation"][key] = value.lower() in ("true", "1", "yes")

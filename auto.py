@@ -123,9 +123,21 @@ def init(
     # Add rate limiting config back into merged_config for start_tracing
     merged_config.update(rate_limit_config)
     
+    # Extract openai_agents config (not passed to start_tracing)
+    openai_agents_enabled = merged_config.pop('openai_agents', True)
+    
     # Initialize via start_tracing with full config
     provider = start_tracing(**merged_config)
     _init_method = "init"
+    
+    # Auto-install OpenAI Agents SDK integration if available
+    if openai_agents_enabled:
+        try:
+            from traccia.integrations.openai_agents import install as install_openai_agents
+            install_openai_agents(enabled=True)
+        except Exception:
+            # Agents SDK not installed or error during install, skip silently
+            pass
     
     # Auto-start trace if requested
     if final_auto_start:

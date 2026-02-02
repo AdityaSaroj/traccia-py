@@ -1,7 +1,12 @@
-"""Instrumentation helpers and monkey patching."""
+"""Infrastructure and vendor instrumentation.
+
+This module exposes helpers for HTTP client/server tracing (including FastAPI),
+vendor SDK patching (OpenAI, Anthropic, requests), and decorators used for
+auto-instrumentation.
+"""
 
 from traccia.instrumentation.decorator import observe
-from traccia.instrumentation.openai import patch_openai
+from traccia.instrumentation.openai import patch_openai, patch_openai_responses
 from traccia.instrumentation.anthropic import patch_anthropic
 from traccia.instrumentation.requests import patch_requests
 from traccia.instrumentation.http_client import inject_headers as inject_http_headers
@@ -11,6 +16,7 @@ from traccia.instrumentation.fastapi import install_http_middleware
 __all__ = [
     "observe",
     "patch_openai",
+    "patch_openai_responses",
     "patch_anthropic",
     "patch_requests",
     "inject_http_headers",

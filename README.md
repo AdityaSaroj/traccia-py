@@ -7,6 +7,7 @@ Traccia is a lightweight, high-performance Python SDK for observability and trac
 ## ✨ Features
 
 - **🔍 Automatic Instrumentation**: Auto-patch OpenAI, Anthropic, requests, and HTTP libraries
+- **🤖 Framework Integrations**: Support for LangChain and OpenAI Agents SDK
 - **📊 LLM-Aware Tracing**: Track tokens, costs, prompts, and completions automatically
 - **⚡ Zero-Config Start**: Simple `init()` call with automatic config discovery
 - **🎯 Decorator-Based**: Trace any function with `@observe` decorator
@@ -91,6 +92,33 @@ Spans for LLM/chat model runs are created automatically with the same attributes
 
 **Note:** `pip install traccia[langchain]` installs traccia plus `langchain-core`; you need this extra to use the callback handler. If you already have `langchain-core` (e.g. from `langchain` or `langchain-openai`), base `pip install traccia` may be enough at runtime, but `traccia[langchain]` is the supported way to get a compatible dependency.
 
+### OpenAI Agents SDK
+
+Traccia **automatically** detects and instruments the OpenAI Agents SDK when installed. No extra code needed:
+
+```python
+from traccia import init
+from agents import Agent, Runner
+
+init()  # Automatically enables Agents SDK tracing
+
+agent = Agent(
+    name="Assistant",
+    instructions="You are a helpful assistant"
+)
+result = Runner.run_sync(agent, "Write a haiku about recursion")
+```
+
+**Configuration**: Auto-enabled by default when `openai-agents` is installed. To disable:
+
+```python
+init(openai_agents=False)  # Explicit parameter
+# OR set environment variable: TRACCIA_OPENAI_AGENTS=false
+# OR in traccia.toml under [instrumentation]: openai_agents = false
+```
+
+**Compatibility**: If you have `openai-agents` installed but don't use it (e.g., using LangChain or pure OpenAI instead), the integration is registered but never invoked—no overhead or extra spans.
+
 ---
 
 ## 📖 Configuration
@@ -131,6 +159,7 @@ reset_trace_file = false      # Reset file on initialization
 enable_patching = true          # Auto-patch libraries (OpenAI, Anthropic, requests)
 enable_token_counting = true    # Count tokens for LLM calls
 enable_costs = true             # Calculate costs
+openai_agents = true            # Auto-enable OpenAI Agents SDK integration
 auto_instrument_tools = false   # Auto-instrument tool calls (experimental)
 max_tool_spans = 100            # Max tool spans to create
 max_span_depth = 10             # Max nested span depth
@@ -568,6 +597,17 @@ Application Code (@observe)
         ↓
    Backend (Grafana Tempo / Jaeger / Zipkin / etc.)
 ```
+
+### Instrumentation vs Integrations
+
+- **`traccia.instrumentation.*`**: Infrastructure and vendor instrumentation.
+  - HTTP client/server helpers (including FastAPI middleware).
+  - Vendor SDK hooks and monkey patching (e.g., OpenAI, Anthropic, `requests`).
+  - Decorators and utilities used for auto-instrumenting arbitrary functions.
+
+- **`traccia.integrations.*`**: AI/agent framework integrations.
+  - Adapters that plug into higher-level frameworks via their official extension points (e.g., LangChain callbacks).
+  - Work at the level of chains, tools, agents, and workflows rather than raw HTTP or SDK calls.
 
 ---
 

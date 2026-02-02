@@ -1,6 +1,6 @@
 """Runtime configuration state management."""
 
-from typing import Optional, List
+from typing import Optional, List, Any
 
 # Global runtime configuration state
 _config = {
@@ -15,6 +15,7 @@ _config = {
     "agent_id": None,
     "debug": False,
     "attr_truncation_limit": 1000,
+    "openai_agents": True,
 }
 
 
@@ -104,3 +105,23 @@ def set_attr_truncation_limit(value: int) -> None:
 
 def get_attr_truncation_limit() -> int:
     return _config["attr_truncation_limit"]
+
+
+def get_openai_agents() -> bool:
+    """Get whether OpenAI Agents SDK integration is enabled."""
+    return _config.get("openai_agents", True)
+
+
+def set_openai_agents(value: bool) -> None:
+    """Set whether OpenAI Agents SDK integration is enabled."""
+    _config["openai_agents"] = value
+
+
+def set_config_value(key: str, value: Any) -> None:
+    """Set a runtime config value."""
+    _config[key] = value
+
+
+def get_config_value(key: str, default: Any = None) -> Any:
+    """Get a runtime config value."""
+    return _config.get(key, default)
