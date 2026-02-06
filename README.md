@@ -4,12 +4,12 @@
 
 Traccia is a lightweight, high-performance Python SDK for observability and tracing of AI agents, LLM applications, and complex distributed systems. Built on OpenTelemetry standards with specialized instrumentation for AI workloads.
 
-Traccia is now available in pypi.
+[Traccia](https://pypi.org/project/traccia/) is available on PyPI.
 
 ## ✨ Features
 
 - **🔍 Automatic Instrumentation**: Auto-patch OpenAI, Anthropic, requests, and HTTP libraries
-- **🤖 Framework Integrations**: Support for LangChain and OpenAI Agents SDK
+- **🤖 Framework Integrations**: Support for LangChain, CrewAI, and OpenAI Agents SDK
 - **📊 LLM-Aware Tracing**: Track tokens, costs, prompts, and completions automatically
 - **⚡ Zero-Config Start**: Simple `init()` call with automatic config discovery
 - **🎯 Decorator-Based**: Trace any function with `@observe` decorator
@@ -120,6 +120,33 @@ init(openai_agents=False)  # Explicit parameter
 ```
 
 **Compatibility**: If you have `openai-agents` installed but don't use it (e.g., using LangChain or pure OpenAI instead), the integration is registered but never invoked—no overhead or extra spans.
+
+### CrewAI
+
+Traccia **automatically** instruments [CrewAI](https://docs.crewai.com/) when it is installed in your environment.
+
+```python
+from traccia import init
+from crewai import Agent, Task, Crew, Process
+
+init()  # Auto-enables CrewAI tracing when CrewAI is installed
+
+researcher = Agent(role="Research Analyst", goal="Research a topic", llm="gpt-4o-mini")
+task = Task(description="Research Shawn Michaels", agent=researcher)
+
+crew = Crew(agents=[researcher], tasks=[task], process=Process.sequential, verbose=True)
+result = crew.kickoff()
+```
+
+Traccia will create spans for the crew (`crewai.crew.kickoff`), each task (`crewai.task.*`), agents (`crewai.agent.*`), and underlying LLM calls, which nest under the existing OpenAI spans.
+
+**Configuration**: Auto-enabled by default when `crewai` is installed. To disable:
+
+```python
+init(crewai=False)  # Explicit parameter
+# OR set environment variable: TRACCIA_CREWAI=false
+# OR in traccia.toml under [instrumentation]: crewai = false
+```
 
 ---
 
