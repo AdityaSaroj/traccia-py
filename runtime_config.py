@@ -16,6 +16,7 @@ _config = {
     "debug": False,
     "attr_truncation_limit": 1000,
     "openai_agents": True,
+    "crewai": True,
 }
 
 
@@ -115,6 +116,16 @@ def get_openai_agents() -> bool:
 def set_openai_agents(value: bool) -> None:
     """Set whether OpenAI Agents SDK integration is enabled."""
     _config["openai_agents"] = value
+
+
+def get_crewai() -> bool:
+    """Get whether CrewAI integration is enabled."""
+    return _config.get("crewai", True)
+
+
+def set_crewai(value: bool) -> None:
+    """Set whether CrewAI integration is enabled."""
+    _config["crewai"] = value
 
 
 def set_config_value(key: str, value: Any) -> None:

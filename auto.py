@@ -123,21 +123,9 @@ def init(
     # Add rate limiting config back into merged_config for start_tracing
     merged_config.update(rate_limit_config)
     
-    # Extract openai_agents config (not passed to start_tracing)
-    openai_agents_enabled = merged_config.pop('openai_agents', True)
-    
     # Initialize via start_tracing with full config
     provider = start_tracing(**merged_config)
     _init_method = "init"
-    
-    # Auto-install OpenAI Agents SDK integration if available
-    if openai_agents_enabled:
-        try:
-            from traccia.integrations.openai_agents import install as install_openai_agents
-            install_openai_agents(enabled=True)
-        except Exception:
-            # Agents SDK not installed or error during install, skip silently
-            pass
     
     # Auto-start trace if requested
     if final_auto_start:
@@ -343,6 +331,8 @@ def start_tracing(
     service_name: Optional[str] = None,
     max_spans_per_second: Optional[float] = None,  # Rate limiting
     max_block_ms: int = 100,  # Rate limiting block time
+    openai_agents: Optional[bool] = None,  # Auto-install OpenAI Agents integration
+    crewai: Optional[bool] = None,  # Auto-install CrewAI integration
 ) -> TracerProvider:
     """
     Initialize global tracing:
@@ -579,6 +569,10 @@ def start_tracing(
     _started = True
     if _init_method is None:
         _init_method = "start_tracing"
+
+    # Auto-install framework integrations (OpenAI Agents, CrewAI, etc.)
+    _install_integrations(openai_agents_flag=openai_agents, crewai_flag=crewai)
+
     return provider
 
 
@@ -745,4 +739,49 @@ def _stop_pricing_refresh() -> None:
         _pricing_refresh_stop.set()
     if _pricing_refresh_thread:
         _pricing_refresh_thread.join(timeout=1)
+
+
+def _install_integrations(
+    openai_agents_flag: Optional[bool],
+    crewai_flag: Optional[bool],
+) -> None:
+    """
+    Auto-install framework integrations so that init() and start_tracing()
+    behave equivalently with respect to supported frameworks.
+    """
+    # OpenAI Agents SDK integration
+    try:
+        from traccia import runtime_config as _rc
+    except Exception:
+        _rc = None
+
+    # Determine OpenAI Agents enablement: explicit flag > runtime config > default True
+    openai_enabled = True
+    if _rc is not None:
+        openai_enabled = _rc.get_config_value("openai_agents", True)
+    if openai_agents_flag is not None:
+        openai_enabled = bool(openai_agents_flag)
+
+    if openai_enabled:
+        try:
+            from traccia.integrations.openai_agents import install as install_openai_agents
+            install_openai_agents(enabled=True)
+        except Exception:
+            # Agents SDK not installed or error during install, skip silently
+            pass
+
+    # Determine CrewAI enablement: explicit flag > runtime config > default True
+    crewai_enabled = True
+    if _rc is not None:
+        crewai_enabled = _rc.get_config_value("crewai", True)
+    if crewai_flag is not None:
+        crewai_enabled = bool(crewai_flag)
+
+    if crewai_enabled:
+        try:
+            from traccia.integrations.crewai import install as install_crewai
+            install_crewai(enabled=True)
+        except Exception:
+            # CrewAI not installed or error during install, skip silently
+            pass
 
