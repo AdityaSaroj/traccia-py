@@ -207,6 +207,76 @@ enable_patching = false
             finally:
                 os.unlink(f.name)
                 stop_tracing()
+    
+    def test_endpoint_config_precedence(self):
+        """Test endpoint configuration precedence: param > env > file > default."""
+        from traccia.config import DEFAULT_OTLP_TRACE_ENDPOINT
+        
+        # Test 1: Default is used when nothing is set
+        merged = config.load_config_with_priority()
+        # When no endpoint is set via any source, the default is applied at usage time in auto.py
+        # The config itself will have endpoint=None
+        self.assertIsNone(merged.get("endpoint"))
+        
+        # Test 2: Config file sets endpoint
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False) as f:
+            f.write("""
+[tracing]
+endpoint = "http://file-endpoint.com/v2/traces"
+""")
+            f.flush()
+            
+            try:
+                merged = config.load_config_with_priority(config_file=f.name)
+                self.assertEqual(merged["endpoint"], "http://file-endpoint.com/v2/traces")
+            finally:
+                os.unlink(f.name)
+        
+        # Test 3: Environment variable overrides config file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False) as f:
+            f.write("""
+[tracing]
+endpoint = "http://file-endpoint.com/v2/traces"
+""")
+            f.flush()
+            
+            try:
+                os.environ["TRACCIA_ENDPOINT"] = "http://env-endpoint.com/v2/traces"
+                
+                try:
+                    merged = config.load_config_with_priority(config_file=f.name)
+                    # Env should win over file
+                    self.assertEqual(merged["endpoint"], "http://env-endpoint.com/v2/traces")
+                finally:
+                    del os.environ["TRACCIA_ENDPOINT"]
+            finally:
+                os.unlink(f.name)
+        
+        # Test 4: Explicit parameter overrides environment and file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False) as f:
+            f.write("""
+[tracing]
+endpoint = "http://file-endpoint.com/v2/traces"
+""")
+            f.flush()
+            
+            try:
+                os.environ["TRACCIA_ENDPOINT"] = "http://env-endpoint.com/v2/traces"
+                
+                try:
+                    merged = config.load_config_with_priority(
+                        config_file=f.name,
+                        overrides={"endpoint": "http://param-endpoint.com/v2/traces"}
+                    )
+                    # Explicit param should win
+                    self.assertEqual(merged["endpoint"], "http://param-endpoint.com/v2/traces")
+                finally:
+                    del os.environ["TRACCIA_ENDPOINT"]
+            finally:
+                os.unlink(f.name)
+        
+        # Test 5: Verify default constant value is correct
+        self.assertEqual(DEFAULT_OTLP_TRACE_ENDPOINT, "https://api.traccia.ai/v2/traces")
 
 
 class TestConfigFromEnv(unittest.TestCase):

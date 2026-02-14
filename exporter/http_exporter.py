@@ -10,9 +10,9 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 from traccia.tracer.span import Span
 from traccia.tracer.span import SpanStatus
 from traccia import runtime_config
+from traccia.config import DEFAULT_ENDPOINT
 
 TransientStatus = {429, 503, 504}
-DEFAULT_ENDPOINT = "https://api.traccia.ai/v2/traces"
 
 
 class HttpExporter:
