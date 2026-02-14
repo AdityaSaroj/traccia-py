@@ -65,6 +65,21 @@ ENV_VAR_MAPPING = {
 }
 
 
+# Default endpoint values
+# 
+# Resolution order for 'endpoint' configuration:
+# 1. Explicit parameter: init(endpoint=...) or start_tracing(endpoint=...)
+# 2. Environment variables: TRACCIA_ENDPOINT or AGENT_DASHBOARD_ENDPOINT
+# 3. Config file: traccia.toml [tracing] endpoint = "..."
+# 4. Default constant: DEFAULT_OTLP_TRACE_ENDPOINT (if none of the above are set)
+#
+# The same key 'endpoint' is used across all sources (parameter, env, config file).
+# DEFAULT_ENDPOINT is a backward compatibility alias for DEFAULT_OTLP_TRACE_ENDPOINT.
+# Metrics endpoint is derived from this by replacing /v2/traces with /v2/metrics.
+DEFAULT_OTLP_TRACE_ENDPOINT = "https://api.traccia.ai/v2/traces"
+DEFAULT_ENDPOINT = DEFAULT_OTLP_TRACE_ENDPOINT  # Backward compatibility alias
+
+
 class TracingConfig(BaseModel):
     """Tracing configuration section."""
     

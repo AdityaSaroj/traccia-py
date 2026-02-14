@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, Any
 
 from traccia.exporter import HttpExporter, ConsoleExporter, FileExporter, OTLPExporter
-from traccia.exporter.http_exporter import DEFAULT_ENDPOINT
+from traccia.config import DEFAULT_OTLP_TRACE_ENDPOINT, DEFAULT_ENDPOINT
 from traccia.instrumentation import patch_anthropic, patch_openai, patch_requests
 from traccia.processors import (
     BatchSpanProcessor,
@@ -448,13 +448,13 @@ def start_tracing(
     elif use_otlp:
         # Use OTLP exporter (OpenTelemetry standard)
         network_exporter = OTLPExporter(
-            endpoint=endpoint or DEFAULT_ENDPOINT,
+            endpoint=endpoint or DEFAULT_OTLP_TRACE_ENDPOINT,
             api_key=key,
         )
     else:
         # Legacy HttpExporter for backward compatibility
         network_exporter = HttpExporter(
-            endpoint=endpoint or DEFAULT_ENDPOINT,
+            endpoint=endpoint or DEFAULT_OTLP_TRACE_ENDPOINT,
             api_key=key,
             transport=transport,
         )
@@ -793,7 +793,7 @@ def _initialize_metrics(
                 metrics_endpoint = endpoint.rstrip("/") + "/v2/metrics"
         else:
             # Use default endpoint
-            metrics_endpoint = DEFAULT_ENDPOINT.replace("/v2/traces", "/v2/metrics")
+            metrics_endpoint = DEFAULT_OTLP_TRACE_ENDPOINT.replace("/v2/traces", "/v2/metrics")
 
     # Create resource with service.name
     resource_attrs = {"service.name": service_name}
