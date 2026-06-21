@@ -66,14 +66,10 @@ A clear and concise description of what you expected to happen.
 - OS: [e.g., macOS, Linux, Windows]
 
 **Code snippet:**
-```python
-# Minimal code that reproduces the issue
-```
+Minimal code that reproduces the issue
 
 **Error output:**
-```
 Paste error messages here
-```
 ```
 
 ### Suggesting Enhancements
