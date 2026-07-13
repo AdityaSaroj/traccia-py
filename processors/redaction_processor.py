@@ -11,6 +11,35 @@ from traccia.tracer.provider import SpanProcessor
 _EMAIL = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
 _PHONE = re.compile(r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b")
 _SSN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+# Best-effort PHI-oriented patterns (not medical NER — document limits in docs)
+_MRN = re.compile(r"\b(?:MRN|mrn)[:\s#=-]*([A-Za-z0-9-]{4,})\b")
+_NPI = re.compile(r"\b(?:NPI|npi)[:\s#=-]*(\d{10})\b")
+_DOB = re.compile(
+    r"\b(?:DOB|dob|date of birth)[:\s=-]*("
+    r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2}"
+    r")\b",
+    re.IGNORECASE,
+)
+_MEDICARE = re.compile(r"\b\d{4}-\d{4}-\d{4}\b")  # common MBI-like grouping (heuristic)
+
+
+def redact_string(text: str) -> str:
+    """Mask common PII/PHI-ish patterns (email, US phone, SSN-like, MRN/NPI/DOB heuristics).
+
+    Best-effort regex only — not a guarantee that all PHI is removed.
+    """
+    if not text:
+        return text
+    text = _EMAIL.sub("[REDACTED_EMAIL]", text)
+    # Labeled PHI heuristics before generic phone/SSN so "NPI 1234567890" is not treated as a phone
+    text = _MRN.sub("MRN:[REDACTED_MRN]", text)
+    text = _NPI.sub("NPI:[REDACTED_NPI]", text)
+    text = _DOB.sub("DOB:[REDACTED_DOB]", text)
+    text = _PHONE.sub("[REDACTED_PHONE]", text)
+    text = _SSN.sub("[REDACTED_SSN]", text)
+    text = _MEDICARE.sub("[REDACTED_ID]", text)
+    return text
+
 
 # Attribute key substrings that commonly hold user content (extend via RedactionSpanProcessor.extra_key_fragments)
 DEFAULT_SENSITIVE_KEY_FRAGMENTS: FrozenSet[str] = frozenset(
@@ -27,18 +56,13 @@ DEFAULT_SENSITIVE_KEY_FRAGMENTS: FrozenSet[str] = frozenset(
         "response",
         "user",
         "assistant",
+        "phi",
+        "clinical",
+        "patient",
+        "diagnosis",
+        "medication",
     )
 )
-
-
-def redact_string(text: str) -> str:
-    """Mask common PII patterns in a string (email, US phone, SSN-like)."""
-    if not text:
-        return text
-    text = _EMAIL.sub("[REDACTED_EMAIL]", text)
-    text = _PHONE.sub("[REDACTED_PHONE]", text)
-    text = _SSN.sub("[REDACTED_SSN]", text)
-    return text
 
 
 def _key_is_sensitive(key: str, fragments: Iterable[str]) -> bool:

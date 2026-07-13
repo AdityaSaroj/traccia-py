@@ -19,7 +19,7 @@ Built on OpenTelemetry standards, Traccia provides automatic instrumentation, to
 - **Multiple Exporters**: OTLP-compatible export to Grafana Tempo, Jaeger, Zipkin, SigNoz, Console, or File
 - **Production-Ready Architecture**: Rate limiting, error handling, configuration validation, and reliable flushing
 - **Guardrail Detection**: Passive detection of AI safety controls, provider-native safeguards, and custom guardrails
-- **AI Governance and Compliance**: EU AI Act evidence, transparency records, integrity verification, and PII redaction
+- **AI Governance and Compliance**: EU AI Act and HIPAA-oriented evidence, transparency records, integrity verification, and PII/PHI redaction helpers
 - **Type-Safe Configuration**: Full Pydantic validation and configuration management
 - **High Performance**: Efficient batching, async support, and low-overhead instrumentation
 - **Security Controls**: No secrets in logs and configurable data truncation
@@ -1212,9 +1212,9 @@ disclosure(channel="ui", disclosed_to_user=True)  # after user saw your AI notic
 
 `init(compliance={"frameworks": ["eu_ai_act"], "risk_tier": "high"})` stamps `eu_ai_act.risk_tier` on every span from that process. Static SDK config — not read from the dashboard registry. Link registry + agent in the UI for exports; set `risk_tier` in `init()` if you need it on every span.
 
-### PII redaction
+### PII / PHI redaction
 
-Pattern-based masking (email, US phone, SSN-like) — not ML PII detection.
+Best-effort regex masking (email, phone, SSN-like, MRN/NPI/DOB heuristics). **Not** a guarantee that all PHI is removed — not ML/medical NER.
 
 ```python
 from opentelemetry import trace
@@ -1223,6 +1223,8 @@ from traccia.processors.redaction_processor import redact_string, apply_redactio
 
 # Automatic: redact sensitive attribute keys on every span before export
 init(redact_pii=True)  # or TRACCIA_REDACT_PII=1
+# When compliance includes hipaa, redact_pii defaults on unless explicitly set False
+init(compliance={"frameworks": ["hipaa"]}, redact_pii=True)
 
 @observe()
 def agent_step(user_message: str) -> str:
@@ -1235,6 +1237,8 @@ def agent_step(user_message: str) -> str:
 
 - **Platform**: [Governance Hub](https://traccia.ai/docs/platform/governance) — registry, reviews, incidents, evidence exports.
 - **EU AI Act guide**: [docs/compliance/eu-ai-act](https://traccia.ai/docs/compliance/eu-ai-act) (opt-in module; decision support only).
+- **HIPAA guide**: [docs/compliance/hipaa](https://traccia.ai/docs/compliance/hipaa) (opt-in module; soft PHI warnings; no signed BAA yet — contact support@traccia.ai).
+- **Trust Center**: [trust-center](https://traccia.ai/trust-center) (HIPAA shared responsibility).
 
 ---
 

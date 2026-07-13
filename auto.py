@@ -593,12 +593,19 @@ def start_tracing(
         if _comp_env:
             _compliance = {"frameworks": [f.strip() for f in str(_comp_env).split(",") if f.strip()]}
     _eu_tier = None
-    if isinstance(_compliance, dict) and "eu_ai_act" in (_compliance.get("frameworks") or []):
-        _eu_tier = _compliance.get("risk_tier")
+    _hipaa_enabled = False
+    if isinstance(_compliance, dict):
+        _frameworks = _compliance.get("frameworks") or []
+        if "eu_ai_act" in _frameworks:
+            _eu_tier = _compliance.get("risk_tier")
+        if "hipaa" in _frameworks:
+            _hipaa_enabled = True
     try:
         from traccia.processors.governance_enrichment import GovernanceEnrichmentProcessor
 
-        provider.add_span_processor(GovernanceEnrichmentProcessor(eu_risk_tier=_eu_tier))
+        provider.add_span_processor(
+            GovernanceEnrichmentProcessor(eu_risk_tier=_eu_tier, hipaa_enabled=_hipaa_enabled)
+        )
     except Exception as _gov_exc:
         import logging
 
@@ -612,6 +619,8 @@ def start_tracing(
         _redact_env = sdk_config.get_env_value("redact_pii") or sdk_config.get_env_value("TRACCIA_REDACT_PII")
         if _redact_env is not None:
             _redact_pii = str(_redact_env).strip().lower() in ("1", "true", "yes", "on")
+    if _hipaa_enabled and _redact_pii is None:
+        _redact_pii = True  # recommend on for HIPAA; still not a hard block when False
     if _redact_pii:
         try:
             from traccia.processors.redaction_processor import RedactionSpanProcessor

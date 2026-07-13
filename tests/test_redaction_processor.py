@@ -28,6 +28,16 @@ def test_redact_string_email_phone_ssn():
     assert "alice@corp.com" not in out
 
 
+def test_redact_string_phi_heuristics():
+    raw = "Patient MRN: A12B34; NPI 1234567890; DOB 01/15/1980"
+    out = redact_string(raw)
+    assert "[REDACTED_MRN]" in out
+    assert "[REDACTED_NPI]" in out
+    assert "[REDACTED_DOB]" in out
+    assert "A12B34" not in out
+    assert "1234567890" not in out
+
+
 def test_redact_attributes_sensitive_keys():
     attrs = {
         "gen_ai.prompt": "Email me at bob@test.io",
