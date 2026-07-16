@@ -23,14 +23,7 @@ from traccia.prompts.compile import compile_body
 from traccia.processors.redaction_processor import redact_attributes
 
 
-FIXTURES = (
-    Path(__file__).resolve().parents[2]
-    / "docs"
-    / "implementation"
-    / "prompt-management"
-    / "scratch"
-    / "f49-compile-fixtures.json"
-)
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "compile-fixtures.json"
 
 
 @pytest.fixture(autouse=True)
