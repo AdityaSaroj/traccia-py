@@ -72,6 +72,33 @@ def test_before_llm_warn_proceeds():
                 assert check_policy(action={"type": "llm_call"})["would_have"] is True
 
 
+def test_stamp_span_sets_matched_activation():
+    from traccia.governance.pep import _stamp_span
+
+    span = MagicMock()
+    decision = {
+        "id": "dec-obs",
+        "effect": "deny",
+        "would_have": True,
+        "activation": "observe",
+        "reasons": ["would deny"],
+    }
+    with patch("traccia.context.get_current_span", return_value=span):
+        _stamp_span(decision)
+    span.set_attribute.assert_any_call("traccia.policy.activation", "observe")
+
+
+def test_stamp_span_omits_activation_when_unmatched():
+    from traccia.governance.pep import _stamp_span
+
+    span = MagicMock()
+    decision = {"id": "dec-allow", "effect": "allow", "would_have": False, "reasons": []}
+    with patch("traccia.context.get_current_span", return_value=span):
+        _stamp_span(decision)
+    keys = [c.args[0] for c in span.set_attribute.call_args_list]
+    assert "traccia.policy.activation" not in keys
+
+
 def test_before_tool_calls_check():
     decision = {"id": "dec-4", "effect": "allow", "would_have": False, "reasons": []}
     with runtime_config.run_identity(agent_id="support", pep_enabled=True):
@@ -83,6 +110,66 @@ def test_before_tool_calls_check():
                 body = session.post.call_args.kwargs["json"]
                 assert body["action"]["type"] == "tool_call"
                 assert body["action"]["name"] == "search"
+
+
+def test_before_tool_deny_sends_amount_payload():
+    decision = {
+        "id": "dec-refund",
+        "effect": "deny",
+        "would_have": False,
+        "reasons": ["Refund Guard amount $80.000 is above $50.000"],
+        "obligations": {},
+    }
+    with runtime_config.run_identity(agent_id="support", pep_enabled=True):
+        with patch("traccia.governance.pep._credentials", return_value=("key", "https://app.traccia.ai/v1/traces")):
+            with patch("traccia.governance.pep._http_session") as session:
+                session.post.return_value = MagicMock(status_code=200, json=lambda: decision)
+                with pytest.raises(AgentBlockedError) as exc:
+                    enforce_tool_call("issue_refund", {"amount": 80})
+                assert "above" in str(exc.value)
+                body = session.post.call_args.kwargs["json"]
+                assert body["action"] == {"type": "tool_call", "name": "issue_refund"}
+                assert body["context"]["input"] == {"amount": 80}
+                assert body["context"]["tool_name"] == "issue_refund"
+
+
+def test_before_tool_deny_sends_high_risk_name():
+    decision = {
+        "id": "dec-risk",
+        "effect": "deny",
+        "would_have": False,
+        "reasons": ["High-Risk Tool delete_account is not allowed unsupervised"],
+        "obligations": {},
+    }
+    with runtime_config.run_identity(agent_id="support", pep_enabled=True):
+        with patch("traccia.governance.pep._credentials", return_value=("key", "https://app.traccia.ai/v1/traces")):
+            with patch("traccia.governance.pep._http_session") as session:
+                session.post.return_value = MagicMock(status_code=200, json=lambda: decision)
+                with pytest.raises(AgentBlockedError) as exc:
+                    enforce_tool_call("delete_account", {})
+                assert "delete_account" in str(exc.value)
+                body = session.post.call_args.kwargs["json"]
+                assert body["action"]["name"] == "delete_account"
+
+
+def test_before_tool_deny_sends_shell_pattern():
+    decision = {
+        "id": "dec-shell",
+        "effect": "deny",
+        "would_have": False,
+        "reasons": ["Dangerous Shell Commands matched rm -rf"],
+        "obligations": {},
+    }
+    with runtime_config.run_identity(agent_id="support", pep_enabled=True):
+        with patch("traccia.governance.pep._credentials", return_value=("key", "https://app.traccia.ai/v1/traces")):
+            with patch("traccia.governance.pep._http_session") as session:
+                session.post.return_value = MagicMock(status_code=200, json=lambda: decision)
+                with pytest.raises(AgentBlockedError) as exc:
+                    enforce_tool_call("shell", {"command": "rm -rf /"})
+                assert "rm -rf" in str(exc.value)
+                body = session.post.call_args.kwargs["json"]
+                assert body["action"]["name"] == "shell"
+                assert body["context"]["input"]["command"] == "rm -rf /"
 
 
 def test_trace_ids_format_ints_as_hex():

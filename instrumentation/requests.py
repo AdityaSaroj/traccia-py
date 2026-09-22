@@ -24,6 +24,8 @@ _SKIP_URL_SUBSTRINGS = (
     "/api/v1/prompt-runtime/",
     "/api/v1/agents/",
     "/api/v1/policy/",
+    "openaipublic.blob.core.windows.net/encodings",
+    ".tiktoken",
 )
 
 

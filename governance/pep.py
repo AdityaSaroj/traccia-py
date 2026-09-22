@@ -75,6 +75,9 @@ def _stamp_span(decision: Dict[str, Any]) -> None:
         if decision.get("effect"):
             span.set_attribute("traccia.policy.effect", str(decision["effect"]))
         span.set_attribute("traccia.policy.would_have", bool(decision.get("would_have")))
+        activation = decision.get("activation")
+        if activation in ("observe", "warn", "block"):
+            span.set_attribute("traccia.policy.activation", str(activation))
         ids = decision.get("policy_ids") or []
         if ids:
             span.set_attribute("traccia.policy.ids", ",".join(str(i) for i in ids))
