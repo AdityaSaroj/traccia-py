@@ -162,7 +162,7 @@ class AgentEnrichmentProcessor(SpanProcessor):
             agent_span_type = str(attrs.get("agent.span.type") or "").lower()
             if attrs.get("llm.model") or agent_span_type == "generation":
                 span_type = "LLM"
-            elif (attrs.get("tool.name") or attrs.get("tool") or attrs.get("http.url")
+            elif (attrs.get("tool.name") or attrs.get("tool")
                   or attrs.get("agent.tool.name") or agent_span_type == "function"):
                 span_type = "TOOL"
             if span_type:

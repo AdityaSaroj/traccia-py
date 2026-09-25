@@ -25,6 +25,9 @@ def test_skips_platform_bookkeeping_urls():
     )
     assert _should_skip_http_instrumentation("https://api.traccia.ai/v2/traces")
     assert _should_skip_http_instrumentation("https://app.traccia.ai/api/v1/policy/check")
+    assert _should_skip_http_instrumentation(
+        "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken"
+    )
 
 
 def test_does_not_skip_ordinary_http():

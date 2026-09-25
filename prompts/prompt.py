@@ -135,8 +135,14 @@ class LoadedPrompt:
                 span = get_current_span()
             if not span or not hasattr(span, "set_attribute"):
                 return
-            for key, value in self.span_attributes().items():
+            attrs = self.span_attributes()
+            for key, value in attrs.items():
                 span.set_attribute(key, value)
+            context = getattr(span, "context", None)
+            trace_id = getattr(context, "trace_id", None) if context else None
+            from traccia.governance.pep import note_prompt_attributes
+
+            note_prompt_attributes(trace_id, attrs)
         except Exception as exc:
             logger.debug("Could not apply prompt span attributes: %s", exc)
 
