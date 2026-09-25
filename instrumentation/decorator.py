@@ -9,6 +9,20 @@ from typing import Any, Callable, Dict, Iterable, Optional
 from traccia.tracer.span import SpanStatus
 
 
+def _note_retrieval(span: Any) -> None:
+    try:
+        from traccia.governance.pep import note_retrieval_attributes
+
+        attributes = getattr(span, "attributes", None) or {}
+        context = getattr(span, "context", None)
+        trace_id = getattr(context, "trace_id", None) if context else None
+        if isinstance(trace_id, int):
+            trace_id = format(trace_id, "032x")
+        note_retrieval_attributes(str(trace_id) if trace_id else None, dict(attributes))
+    except Exception:
+        return
+
+
 def _capture_args(bound_args: inspect.BoundArguments, skip: Iterable[str]) -> Dict[str, Any]:
     """Capture function arguments, converting complex types to OTel-compatible types."""
     captured = {}
@@ -71,7 +85,7 @@ def _infer_type_from_attributes(attributes: Dict[str, Any]) -> Optional[str]:
         return "llm"
     
     # Check for tool indicators
-    if any(key in attributes for key in ["tool.name", "tool", "http.url"]):
+    if any(key in attributes for key in ["tool.name", "tool"]):
         return "tool"
     
     return None
@@ -206,6 +220,11 @@ def observe(
                             {k: v for k, v in bound.arguments.items() if k != "self"},
                         )
                     result = func(*args, **kwargs)
+                    if inferred_type == "tool":
+                        from traccia.governance.pep import remember_tool_result
+
+                        remember_tool_result(span_name, result)
+                    _note_retrieval(span)
                     # For guardrail-typed spans: auto-set triggered from bool return value
                     # so developers don't need to manually call get_current_span().
                     # Only applies when triggered was not pre-set in attributes={}.
@@ -274,6 +293,11 @@ def observe(
                             {k: v for k, v in bound.arguments.items() if k != "self"},
                         )
                     result = await func(*args, **kwargs)
+                    if inferred_type == "tool":
+                        from traccia.governance.pep import remember_tool_result
+
+                        remember_tool_result(span_name, result)
+                    _note_retrieval(span)
                     # For guardrail-typed spans: auto-set triggered from bool return value.
                     if inferred_type == "guardrail" and isinstance(result, bool):
                         if span.attributes.get("guardrail.triggered") is None:

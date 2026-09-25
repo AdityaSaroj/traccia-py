@@ -204,3 +204,103 @@ def test_settle_includes_trace_id():
                 assert body["actual_usd"] == 0.1
                 assert "trace_id" in body
 
+
+def test_write_check_carries_last_read_timestamp_and_customer_id():
+    from traccia.governance import pep
+
+    pep._last_reads.clear()
+    pep.remember_tool_result("search", {"q": "x"})
+    pep.remember_tool_result("get_refund_policy", {"as_of": "2026-09-24T11:40:00Z", "text": "policy"})
+    decision = {"id": "dec-fresh", "effect": "allow", "would_have": False, "reasons": []}
+    with runtime_config.run_identity(agent_id="support", pep_enabled=True):
+        with patch("traccia.governance.pep._credentials", return_value=("key", "https://app.traccia.ai/v1/traces")):
+            with patch("traccia.governance.pep._http_session") as session:
+                session.post.return_value = MagicMock(status_code=200, json=lambda: decision)
+                enforce_tool_call("issue_refund", {"amount": 10, "customer": {"id": "alice"}})
+                body = session.post.call_args.kwargs["json"]
+                freshness = body["context"]["freshness"]
+                assert {"tool": "get_refund_policy", "read_at": "2026-09-24T11:40:00Z", "field": "as_of"} in freshness
+                assert body["context"]["customer_id"] == "alice"
+    pep._last_reads.clear()
+
+
+def test_llm_check_sends_prompt_and_real_retrieval_count():
+    from traccia.governance import pep
+
+    pep._retrieval_by_trace.clear()
+    span = MagicMock()
+    span.context.trace_id = 1
+    span.context.span_id = 2
+    span.attributes = {
+        "traccia.prompt.name": "refund-policy",
+        "traccia.prompt.label": "production",
+        "traccia.prompt.version_id": "ver-1",
+    }
+    pep.note_retrieval_attributes("00000000000000000000000000000001", {
+        "traccia.retrieval.chunk_count": 4,
+    })
+    decision = {"id": "dec-pin", "effect": "allow", "would_have": False, "reasons": []}
+    with runtime_config.run_identity(agent_id="support", pep_enabled=True):
+        with patch("traccia.governance.pep._credentials", return_value=("key", "https://app.traccia.ai/v1/traces")):
+            with patch("traccia.governance.pep._http_session") as session:
+                with patch("traccia.context.get_current_span", return_value=span):
+                    session.post.return_value = MagicMock(status_code=200, json=lambda: decision)
+                    enforce_llm_call({"model": "gpt-4o-mini"})
+                    body = session.post.call_args.kwargs["json"]
+                    assert body["context"]["prompt"] == {
+                        "name": "refund-policy",
+                        "label": "production",
+                        "version_id": "ver-1",
+                    }
+                    assert body["context"]["retrieval"]["chunk_count"] == 4
+                    assert body["context"]["retrieval"]["present"] is True
+    pep._retrieval_by_trace.clear()
+
+
+def test_llm_check_uses_prompt_compiled_before_the_provider_span():
+    from traccia.governance import pep
+
+    pep._prompt_by_trace.clear()
+    span = MagicMock()
+    span.context.trace_id = 1
+    span.context.span_id = 9
+    span.attributes = {}
+    pep.note_prompt_attributes(1, {
+        "traccia.prompt.name": "refund-policy",
+        "traccia.prompt.label": "production",
+    })
+    decision = {"id": "dec-parent", "effect": "allow", "would_have": False, "reasons": []}
+    with runtime_config.run_identity(agent_id="support", pep_enabled=True):
+        with patch("traccia.governance.pep._credentials", return_value=("key", "https://app.traccia.ai/v1/traces")):
+            with patch("traccia.governance.pep._http_session") as session:
+                with patch("traccia.context.get_current_span", return_value=span):
+                    session.post.return_value = MagicMock(status_code=200, json=lambda: decision)
+                    enforce_llm_call({"model": "gpt-4o-mini"})
+                    body = session.post.call_args.kwargs["json"]
+                    assert body["context"]["prompt"] == {
+                        "name": "refund-policy",
+                        "label": "production",
+                    }
+    pep._prompt_by_trace.clear()
+
+
+def test_llm_check_omits_prompt_and_does_not_invent_chunk_count():
+    from traccia.governance import pep
+
+    pep._retrieval_by_trace.clear()
+    span = MagicMock()
+    span.context.trace_id = 3
+    span.context.span_id = 4
+    span.attributes = {}
+    decision = {"id": "dec-plain", "effect": "allow", "would_have": False, "reasons": []}
+    with runtime_config.run_identity(agent_id="support", pep_enabled=True):
+        with patch("traccia.governance.pep._credentials", return_value=("key", "https://app.traccia.ai/v1/traces")):
+            with patch("traccia.governance.pep._http_session") as session:
+                with patch("traccia.context.get_current_span", return_value=span):
+                    session.post.return_value = MagicMock(status_code=200, json=lambda: decision)
+                    enforce_llm_call({"model": "gpt-4o-mini"})
+                    body = session.post.call_args.kwargs["json"]
+                    assert "prompt" not in body["context"]
+                    assert body["context"]["retrieval"] == {"present": False}
+                    assert "chunk_count" not in body["context"]["retrieval"]
+

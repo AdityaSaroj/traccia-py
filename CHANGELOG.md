@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.1.30] - 2026-09-25
+
+### Added
+- `@govern` tool checks send the last read timestamp (`as_of` or `updated_at`) remembered from an earlier tool result, for Freshness Guard
+- `@govern` tool checks send `context.customer_id` when tool arguments include `customer.id`, for Unique Customer Cap
+- `@govern` LLM checks send retrieval evidence only from real `traccia.retrieval.*` span attributes (presence, and chunk count when that attribute was recorded). A missing retrieval span is not reported as zero chunks
+- Prompt name, label, and version id stamped at `LoadedPrompt.compile` are attached to the following LLM policy check, including when the provider call opens its own child span
+
+### Fixed
+- `@observe` no longer treats `http.url` as a tool, so an HTTP span stays a normal span and does not run a tool policy check
+
 ## [0.1.29] - 2026-09-07
 
 ### Added

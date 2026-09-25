@@ -19,6 +19,11 @@ SETTLE_PATH = "/api/v1/policy/settle"
 _BUDGET_CACHE_TTL_S = 5.0
 _budget_lock = threading.Lock()
 _remaining_budget: Dict[str, tuple[float, float]] = {}
+_read_lock = threading.Lock()
+_last_reads: Dict[str, Dict[str, str]] = {}
+_retrieval_by_trace: Dict[str, Dict[str, Any]] = {}
+_prompt_by_trace: Dict[str, Dict[str, str]] = {}
+_PROMPT_KEYS = ("traccia.prompt.name", "traccia.prompt.label", "traccia.prompt.version_id")
 
 
 def _enrich_blocked(exc: AgentBlockedError, decision: Dict[str, Any]) -> AgentBlockedError:
@@ -118,6 +123,123 @@ def _blocked_message(decision: Dict[str, Any]) -> str:
     if decision_id:
         parts.append(f"decision {decision_id}")
     return ". ".join(parts)
+
+
+def remember_tool_result(name: str, result: Any) -> None:
+    """Keep the last as_of or updated_at from a tool result in this process."""
+    if not name or not isinstance(result, dict):
+        return
+    for field in ("as_of", "updated_at"):
+        value = result.get(field)
+        if value not in (None, ""):
+            with _read_lock:
+                _last_reads[str(name)] = {"tool": str(name), "read_at": str(value), "field": field}
+            return
+
+
+def note_retrieval_attributes(trace_id: Optional[str], attributes: Optional[Dict[str, Any]]) -> None:
+    """Record retrieval evidence only when a span already set it."""
+    if not trace_id or not attributes:
+        return
+    chunk = attributes.get("traccia.retrieval.chunk_count")
+    present_flag = attributes.get("traccia.retrieval.present")
+    if chunk is None and present_flag is None:
+        return
+    with _read_lock:
+        entry = _retrieval_by_trace.setdefault(str(trace_id), {})
+        if present_flag is True or chunk is not None:
+            entry["present"] = True
+        if chunk is not None:
+            entry["chunk_count"] = chunk
+
+
+def _freshness_context() -> list:
+    with _read_lock:
+        return [dict(item) for item in _last_reads.values()]
+
+
+def _retrieval_context(trace_id: Optional[str]) -> Dict[str, Any]:
+    if not trace_id:
+        return {"present": False}
+    with _read_lock:
+        found = _retrieval_by_trace.get(str(trace_id))
+    if not found:
+        return {"present": False}
+    out: Dict[str, Any] = {"present": bool(found.get("present"))}
+    if "chunk_count" in found:
+        out["chunk_count"] = found["chunk_count"]
+    return out
+
+
+def note_prompt_attributes(trace_id: Optional[str], attributes: Optional[Dict[str, Any]]) -> None:
+    """Remember a compiled Traccia prompt for later LLM checks in this trace.
+
+    compile() stamps the parent span. The provider wrapper then starts a child
+    span, and that child is current when the check runs.
+    """
+    if not attributes:
+        return
+    name = attributes.get("traccia.prompt.name")
+    if not name:
+        return
+    key = _as_otel_hex(trace_id, 32)
+    if not key:
+        return
+    entry = {"name": str(name)}
+    label = attributes.get("traccia.prompt.label")
+    version_id = attributes.get("traccia.prompt.version_id")
+    if label:
+        entry["label"] = str(label)
+    if version_id:
+        entry["version_id"] = str(version_id)
+    with _read_lock:
+        _prompt_by_trace[key] = entry
+
+
+def _prompt_from_attributes(attributes: Any) -> Dict[str, Any]:
+    if not isinstance(attributes, dict):
+        attributes = getattr(attributes, "_dict", None) if attributes is not None else None
+    if not isinstance(attributes, dict):
+        try:
+            attributes = dict(attributes or {})
+        except Exception:
+            return {}
+    prompt: Dict[str, Any] = {}
+    name = attributes.get("traccia.prompt.name")
+    label = attributes.get("traccia.prompt.label")
+    version_id = attributes.get("traccia.prompt.version_id")
+    if name:
+        prompt["name"] = name
+    if label:
+        prompt["label"] = label
+    if version_id:
+        prompt["version_id"] = version_id
+    return prompt
+
+
+def _prompt_context() -> Dict[str, Any]:
+    try:
+        from traccia.context import get_current_span
+
+        span = get_current_span()
+    except Exception:
+        span = None
+    from_span = _prompt_from_attributes(getattr(span, "attributes", None) if span else None)
+    if from_span.get("name"):
+        return from_span
+    trace_id, _span_id = _trace_ids()
+    if not trace_id:
+        return from_span
+    with _read_lock:
+        remembered = dict(_prompt_by_trace.get(trace_id) or {})
+    return remembered or from_span
+
+
+def _customer_id(arguments: Dict[str, Any]) -> Optional[str]:
+    customer = arguments.get("customer")
+    if isinstance(customer, dict) and customer.get("id") not in (None, ""):
+        return str(customer.get("id"))
+    return None
 
 
 def check_policy(
@@ -238,13 +360,19 @@ def enforce_llm_call(kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
     model = kwargs.get("model")
     max_tokens = kwargs.get("max_tokens") or kwargs.get("max_completion_tokens")
+    trace_id, _span_id = _trace_ids()
+    context: Dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "input_tokens": _estimate_tokens(kwargs),
+        "retrieval": _retrieval_context(trace_id),
+    }
+    prompt = _prompt_context()
+    if prompt:
+        context["prompt"] = prompt
     decision = check_policy(
         action={"type": "llm_call", "name": "llm_call", "model": model},
-        context={
-            "model": model,
-            "max_tokens": max_tokens,
-            "input_tokens": _estimate_tokens(kwargs),
-        },
+        context=context,
     )
     if (decision.get("effect") == "reshape") and not decision.get("would_have"):
         obligations = decision.get("obligations") or {}
@@ -263,7 +391,15 @@ def finish_llm_call(decision: Optional[Dict[str, Any]], *, release: bool = False
 def enforce_tool_call(name: str, arguments: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     if not runtime_config.pep_enabled():
         return None
+    payload = arguments or {}
+    context: Dict[str, Any] = {"input": payload, "tool_name": name}
+    freshness = _freshness_context()
+    if freshness:
+        context["freshness"] = freshness
+    customer_id = _customer_id(payload)
+    if customer_id:
+        context["customer_id"] = customer_id
     return check_policy(
         action={"type": "tool_call", "name": name},
-        context={"input": arguments or {}, "tool_name": name},
+        context=context,
     )
