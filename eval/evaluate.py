@@ -330,7 +330,7 @@ def _run_scorer(
         provider_keys=provider_keys,
         **cred,
     )
-    return {
+    out = {
         "scorer_id": str(remote.get("scorer_id") or scorer.get("id") or ""),
         "scorer_name": str(remote.get("scorer_name") or scorer.get("name") or name),
         "type": remote.get("type") or stype,
@@ -344,6 +344,11 @@ def _run_scorer(
         "cost_usd": remote.get("cost_usd"),
         "usage": remote.get("usage") if isinstance(remote.get("usage"), dict) else None,
     }
+    if isinstance(remote.get("questions"), list):
+        out["questions"] = remote["questions"]
+    if "unsure" in remote:
+        out["unsure"] = remote.get("unsure")
+    return out
 
 
 def _jsonable(value: Any) -> Any:
@@ -383,7 +388,7 @@ def evaluate(
         prompt: Optional prompt name to attach prompt_version_ids when persisting.
         max_concurrency: Parallel item workers (default 10).
         persist: When True, create an Experiment in Traccia (default).
-        provider_keys: BYO keys for platform llm_judge scorers.
+        provider_keys: BYO keys for platform llm_judge scorers, and typesafe for Jev Decision.
         progress: Print N/M to stderr.
     """
     if not name or not str(name).strip():
