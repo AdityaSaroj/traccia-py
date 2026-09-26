@@ -160,7 +160,7 @@ print(result.url)
 
 - **Persist is on by default.** Set `persist=False` for a local-only loop (no experiment URL).
 - **Inline rows** work as `[{"input": {...}, "expected": "..."}]`. With persist on, Traccia still saves a full experiment (helper datasets named `sdk-eval/...` are hidden on **Evaluate → Datasets** unless you turn on **Show SDK-Created**).
-- **Builtins** run in-process: `exact_match`, `contains`, `json_valid`. Mix in platform scorers (LLM-as-judge, code) by name or UUID. Pass `provider_keys=` for judges.
+- **Builtins** run in-process: `exact_match`, `contains`, `json_valid`. Mix in platform scorers (LLM-as-judge, Jev Decision, code) by name or UUID. Pass `provider_keys=` for judges (`typesafe` for Jev). A Jev score keeps each question on the experiment.
 - **One throwing row does not abort the run.** That cell records `error`; other items still score. Configuration and API failures raise `EvaluateError`.
 - If the first task argument is named `row`, `item`, `example`, or `case`, Python passes the full row. Any other name (including `input`) receives only the input dict.
 
@@ -1137,7 +1137,7 @@ print(result.url)
 - `prompt` (str, optional): Prompt name. Attaches version ids when persisting and labels the cell (otherwise `Task`)
 - `max_concurrency` (int): Parallel item workers (default 10)
 - `persist` (bool): Create an experiment (default True). Inline + persist creates `sdk-eval/<name>/<id>`
-- `provider_keys` (dict, optional): BYO keys for platform LLM-as-judge (`openai`, `anthropic`, `gemini`, `groq`)
+- `provider_keys` (dict, optional): BYO keys for platform LLM-as-judge (`openai`, `anthropic`, `gemini`, `groq`) and `typesafe` for Jev Decision. A Jev score keeps each question, so the experiment shows one chip per question.
 - `progress` (bool): Print `N/M` to stderr (default True)
 
 **Returns**: `EvaluateResult` with `rows`, `aggregates`, `summary()`, `url`, `experiment_id`, `dataset_id`, `errors`, `persist_error`. Empty data, bad config, and dataset/scorer API failures raise `EvaluateError`.

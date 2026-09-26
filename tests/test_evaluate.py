@@ -163,6 +163,77 @@ def test_evaluate_prompt_label_and_expected_output_alias():
     assert aliased.aggregates["pass_count"] == 1
 
 
+def test_platform_jev_score_keeps_questions():
+    from traccia.eval.evaluate import _run_scorer
+
+    remote = {
+        "scorer_id": "scorer-1",
+        "scorer_name": "Answer Quality",
+        "type": "jev",
+        "passed": False,
+        "score": 0.4,
+        "model": "jev-1.13.0",
+        "questions": [{"key": "grounded", "label": "Grounded", "passed": False, "score": 0.1}],
+        "unsure": False,
+    }
+    with patch("traccia.eval.evaluate.eval_client.score_remote", return_value=remote):
+        scored = _run_scorer(
+            "Answer Quality",
+            row={"input": "q", "expected_output": "a"},
+            output="out",
+            provider_keys={"typesafe": "k"},
+            scorer_cache={
+                "Answer Quality": {
+                    "id": "scorer-1",
+                    "name": "Answer Quality",
+                    "type": "jev",
+                    "config": {},
+                }
+            },
+            cred={},
+        )
+    assert scored["questions"][0]["label"] == "Grounded"
+    assert scored["unsure"] is False
+
+
+def test_platform_judge_score_omits_jev_fields():
+    from traccia.eval.evaluate import _run_scorer
+
+    remote = {
+        "scorer_id": "judge-1",
+        "scorer_name": "Helpfulness",
+        "type": "llm_judge",
+        "passed": True,
+        "score": 1,
+        "reason": "The reply answers the question.",
+        "model": "gpt-4o-mini",
+        "latency_ms": 120,
+        "cost_usd": 0.001,
+    }
+    with patch("traccia.eval.evaluate.eval_client.score_remote", return_value=remote):
+        scored = _run_scorer(
+            "Helpfulness",
+            row={"input": "q", "expected_output": "a"},
+            output="out",
+            provider_keys={"openai": "k"},
+            scorer_cache={
+                "Helpfulness": {
+                    "id": "judge-1",
+                    "name": "Helpfulness",
+                    "type": "llm_judge",
+                    "config": {},
+                }
+            },
+            cred={},
+        )
+    assert scored["passed"] is True
+    assert scored["score"] == 1
+    assert scored["reason"] == "The reply answers the question."
+    assert scored["model"] == "gpt-4o-mini"
+    assert "questions" not in scored
+    assert "unsure" not in scored
+
+
 def test_score_span_name_and_judge_annotation():
     assert _score_span_name("Helpfulness") == "scorer.Helpfulness"
     span = MagicMock()
