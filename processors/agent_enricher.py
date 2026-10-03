@@ -143,12 +143,16 @@ class AgentEnrichmentProcessor(SpanProcessor):
             model = attrs.get("llm.model")
             prompt_tokens = attrs.get("llm.usage.prompt_tokens") or 0
             completion_tokens = attrs.get("llm.usage.completion_tokens") or 0
-            if model and (prompt_tokens or completion_tokens):
+            cache_read_tokens = attrs.get("llm.usage.cache_read_tokens") or 0
+            cache_write_tokens = attrs.get("llm.usage.cache_write_tokens") or 0
+            if model and (prompt_tokens or completion_tokens or cache_read_tokens or cache_write_tokens):
                 try:
                     cost = compute_cost(
                         model=model,
                         prompt_tokens=int(prompt_tokens or 0),
                         completion_tokens=int(completion_tokens or 0),
+                        cache_read_tokens=int(cache_read_tokens or 0),
+                        cache_write_tokens=int(cache_write_tokens or 0),
                     )
                     if cost is not None:
                         span.set_attribute("llm.cost.usd", cost)
