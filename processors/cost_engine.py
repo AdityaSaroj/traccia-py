@@ -93,6 +93,21 @@ def _lookup_price(
     if ml in table:
         return ml, table[ml]
 
+    # Provider-prefixed keys: grok-4.7 -> xai/grok-4.7, before prefix so grok-4 does not steal grok-4.7.
+    suffix_hits = []
+    for key, value in table.items():
+        tail = key.replace("\\", "/").rsplit("/", 1)[-1]
+        dot = tail.find(".")
+        if dot > 0:
+            head, rest = tail[:dot], tail[dot + 1 :]
+            if head.replace("-", "").isalpha() and "-" in rest:
+                tail = rest
+        if tail.lower() == ml:
+            suffix_hits.append((key, value))
+    if suffix_hits:
+        suffix_hits.sort(key=lambda item: len(item[0]))
+        return suffix_hits[0]
+
     # Longest-key prefix wins to avoid "gpt-4" matching "gpt-4o".
     for key in sorted(table.keys(), key=len, reverse=True):
         if ml.startswith(key.lower()):
@@ -117,30 +132,74 @@ def match_pricing_model_key(
 # Core cost formula
 # ---------------------------------------------------------------------------
 
-def compute_cost(
+def compute_cost_detail(
     model: str,
     prompt_tokens: int,
     completion_tokens: int,
     pricing_table: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> Optional[float]:
-    """
-    Estimate cost in USD for one LLM call.
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+) -> Optional[Dict[str, Any]]:
+    """Price uncached input, cache read, cache write, and output.
 
-    Args:
-        model: Model identifier (e.g. "gpt-4o", "claude-3-opus-20240229").
-        prompt_tokens: Number of input tokens.
-        completion_tokens: Number of output tokens.
-        pricing_table: Optional pricing table to use; defaults to BUNDLED_PRICING.
-
-    Returns:
-        Estimated cost in USD rounded to 6 decimal places, or None if the
-        model is not found in the pricing table.
+    ``cached_prompt`` and ``cache_write`` come from the LiteLLM snapshot.
+    When a cache rate is missing, that portion uses the input rate and
+    ``cache_fallback`` is true.
     """
     table = pricing_table if pricing_table is not None else BUNDLED_PRICING
     matched = _lookup_price(model, table)
     if not matched:
         return None
     _, price = matched
-    prompt_cost = (prompt_tokens / 1_000.0) * price.get("prompt", 0.0)
-    completion_cost = (completion_tokens / 1_000.0) * price.get("completion", 0.0)
-    return round(prompt_cost + completion_cost, 6)
+    cost = (prompt_tokens / 1_000.0) * price.get("prompt", 0.0)
+    cost += (completion_tokens / 1_000.0) * price.get("completion", 0.0)
+    cache_fallback = False
+    if cache_read_tokens:
+        rate = price.get("cached_prompt")
+        if rate is None:
+            rate = price.get("prompt", 0.0)
+            cache_fallback = True
+        cost += (cache_read_tokens / 1_000.0) * float(rate)
+    if cache_write_tokens:
+        rate = price.get("cache_write")
+        if rate is None:
+            rate = price.get("prompt", 0.0)
+            cache_fallback = True
+        cost += (cache_write_tokens / 1_000.0) * float(rate)
+    return {"cost": round(cost, 6), "cache_fallback": cache_fallback}
+
+
+def compute_cost(
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    pricing_table: Optional[Dict[str, Dict[str, Any]]] = None,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+) -> Optional[float]:
+    """
+    Estimate cost in USD for one LLM call.
+
+    Args:
+        model: Model identifier (e.g. "gpt-4o", "claude-3-opus-20240229").
+        prompt_tokens: Number of uncached input tokens.
+        completion_tokens: Number of output tokens.
+        pricing_table: Optional pricing table to use; defaults to BUNDLED_PRICING.
+        cache_read_tokens: Tokens served from cache.
+        cache_write_tokens: Tokens written to cache.
+
+    Returns:
+        Estimated cost in USD rounded to 6 decimal places, or None if the
+        model is not found in the pricing table.
+    """
+    detail = compute_cost_detail(
+        model,
+        prompt_tokens,
+        completion_tokens,
+        pricing_table=pricing_table,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+    )
+    if detail is None:
+        return None
+    return detail["cost"]

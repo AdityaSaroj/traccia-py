@@ -66,6 +66,16 @@ class TestCostEngine:
         key, _ = _lookup_price("gpt-4o-mini", table)
         assert key == "gpt-4o"
 
+    def test_provider_prefixed_grok_matches_short_model(self):
+        from traccia.processors.cost_engine import _lookup_price
+        table = {
+            "xai/grok-4.7": {"prompt": 0.002, "completion": 0.01},
+            "openrouter/x-ai/grok-4.7": {"prompt": 9.0, "completion": 9.0},
+            "grok-4": {"prompt": 0.001, "completion": 0.001},
+        }
+        key, _ = _lookup_price("grok-4.7", table)
+        assert key == "xai/grok-4.7"
+
 
 # ---------------------------------------------------------------------------
 # pricing_config — resolution order

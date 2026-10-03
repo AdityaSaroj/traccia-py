@@ -6,7 +6,7 @@ import logging
 import threading
 from typing import Any, Dict, Optional
 
-from traccia.processors.cost_engine import compute_cost, match_pricing_model_key
+from traccia.processors.cost_engine import compute_cost_detail, match_pricing_model_key
 from traccia.tracer.provider import SpanProcessor
 
 logger = logging.getLogger(__name__)
@@ -105,18 +105,25 @@ class CostAnnotatingProcessor(SpanProcessor):
             prompt = span.attributes.get("llm.usage.input_tokens")
         if completion is None:
             completion = span.attributes.get("llm.usage.output_tokens")
+        cache_read = span.attributes.get("llm.usage.cache_read_tokens") or 0
+        cache_write = span.attributes.get("llm.usage.cache_write_tokens") or 0
 
         if not model or prompt is None or completion is None:
             return
 
-        cost = compute_cost(
+        detail = compute_cost_detail(
             model,
             int(prompt),
             int(completion),
             pricing_table=self.pricing_table,
+            cache_read_tokens=int(cache_read or 0),
+            cache_write_tokens=int(cache_write or 0),
         )
-        if cost is None:
+        if detail is None:
             return
+        cost = detail["cost"]
+        if detail.get("cache_fallback"):
+            span.set_attribute("llm.pricing.cache_fallback", True)
 
         # Lazily check staleness on first successful cost computation.
         _check_and_log_staleness(self.pricing_generated_at, self._age_days)
