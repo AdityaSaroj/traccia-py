@@ -9,7 +9,7 @@ import time
 from typing import Any, Dict, Optional
 
 from traccia.config import load_config
-from traccia.governance.policy import AgentBlockedError, _derive_base_url, _http_session
+from traccia.governance.policy import AgentBlockedError, ApprovalPending, _derive_base_url, _http_session
 from traccia import runtime_config
 
 logger = logging.getLogger("traccia.governance")
@@ -293,6 +293,13 @@ def check_policy(
     if decision.get("would_have"):
         return decision
     effect = decision.get("effect") or "allow"
+    if effect == "queue":
+        raise ApprovalPending(
+            "This action is waiting for approval. Do not run the tool or retry the check.",
+            approval_id=decision.get("approval_id"),
+            expires_at=decision.get("approval_expires_at"),
+            decision_id=decision.get("id"),
+        )
     if effect == "deny":
         raise _enrich_blocked(AgentBlockedError(_blocked_message(decision)), decision)
     return decision

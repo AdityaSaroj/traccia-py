@@ -1336,7 +1336,7 @@ except AgentBlockedError as exc:
     print(exc.reasons, exc.decision_id, exc.remaining_budget_usd)
 ```
 
-Identity comes from `init(agent_id=...)` (or `TRACCIA_AGENT_ID`). Pass `agent_id` on `@govern` only to override in a multi-agent process. `fail_open=True` (default) lets the agent continue if Traccia is unreachable. On Block deny, `@govern` raises `AgentBlockedError`. Observe and Warn still let the call proceed and record a match.
+Identity comes from `init(agent_id=...)` (or `TRACCIA_AGENT_ID`). Pass `agent_id` on `@govern` only to override in a multi-agent process. `fail_open=True` (default) lets the agent continue if Traccia is unreachable. On Block deny, `@govern` raises `AgentBlockedError`. Observe and Warn still let the call proceed and record a match. Refund Guard and Purchase Guard can hold a middle amount: `@govern` raises `ApprovalPending`, which is not `AgentBlockedError`. Catch it, do not run the tool, and do not retry the check. `pending_tool_result()` is a normal tool result when a framework retries raised errors.
 
 For a custom tool that is **not** wrapped with `@observe(as_type="tool")`, call `check_policy(action={"type": "tool_call", "name": "refund"}, context={"input": {"amount": amount}})` yourself.
 

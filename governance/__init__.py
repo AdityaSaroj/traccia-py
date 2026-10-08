@@ -2,7 +2,7 @@
 
 from traccia.governance.govern import govern
 from traccia.governance.hooks import disclosure, enrich_governance_attributes
-from traccia.governance.policy import AgentBlockedError
+from traccia.governance.policy import AgentBlockedError, ApprovalPending, pending_tool_result
 from traccia.governance.pep import check_policy
 from traccia.governance.schema import GOVERNANCE_PREFIX
 
@@ -12,5 +12,7 @@ __all__ = [
     "GOVERNANCE_PREFIX",
     "govern",
     "AgentBlockedError",
+    "ApprovalPending",
+    "pending_tool_result",
     "check_policy",
 ]

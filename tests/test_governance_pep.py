@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from traccia.governance.pep import check_policy, enforce_llm_call, enforce_tool_call
-from traccia.governance.policy import AgentBlockedError
+from traccia.governance.policy import AgentBlockedError, ApprovalPending, pending_tool_result
 from traccia.instrumentation.requests import _should_skip_http_instrumentation
 from traccia import runtime_config
 
@@ -131,6 +131,36 @@ def test_before_tool_deny_sends_amount_payload():
                 assert body["action"] == {"type": "tool_call", "name": "issue_refund"}
                 assert body["context"]["input"] == {"amount": 80}
                 assert body["context"]["tool_name"] == "issue_refund"
+
+
+def test_before_tool_queue_raises_approval_pending_and_does_not_look_like_a_block():
+    decision = {
+        "id": "dec-queue",
+        "effect": "queue",
+        "would_have": False,
+        "approval_id": "appr-1",
+        "approval_expires_at": "2026-10-06T00:15:00+00:00",
+        "reasons": ["needs approval"],
+    }
+    with runtime_config.run_identity(agent_id="support", pep_enabled=True):
+        with patch("traccia.governance.pep._credentials", return_value=("key", "https://app.traccia.ai/v1/traces")):
+            with patch("traccia.governance.pep._http_session") as session:
+                session.post.return_value = MagicMock(status_code=200, json=lambda: decision)
+                with pytest.raises(ApprovalPending) as exc:
+                    enforce_tool_call("issue_refund", {"amount": 40})
+                assert not isinstance(exc.value, AgentBlockedError)
+                assert exc.value.approval_id == "appr-1"
+                assert pending_tool_result(exc.value)["status"] == "pending_approval"
+
+
+def test_before_tool_would_have_queue_still_returns():
+    decision = {"id": "dec-wh", "effect": "queue", "would_have": True, "reasons": ["needs approval"]}
+    with runtime_config.run_identity(agent_id="support", pep_enabled=True):
+        with patch("traccia.governance.pep._credentials", return_value=("key", "https://app.traccia.ai/v1/traces")):
+            with patch("traccia.governance.pep._http_session") as session:
+                session.post.return_value = MagicMock(status_code=200, json=lambda: decision)
+                out = enforce_tool_call("issue_refund", {"amount": 40})
+                assert out["would_have"] is True
 
 
 def test_before_tool_deny_sends_high_risk_name():

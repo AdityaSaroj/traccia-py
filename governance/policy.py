@@ -30,6 +30,29 @@ class AgentBlockedError(Exception):
         self.reasons = reasons or []
 
 
+class ApprovalPending(Exception):
+    """Raised when a tool call is waiting for a person. Do not run the tool or retry the check.
+
+    Catch this at the agent boundary. If the framework retries raised errors, return
+    pending_tool_result() so the model ends the turn. Traccia does not resume the agent.
+    """
+
+    def __init__(self, message: str, *, approval_id=None, expires_at=None, decision_id=None):
+        super().__init__(message)
+        self.approval_id = approval_id
+        self.expires_at = expires_at
+        self.decision_id = decision_id
+
+
+def pending_tool_result(error: ApprovalPending) -> dict:
+    """A normal tool result the model can read. Use this when a framework retries exceptions."""
+    return {
+        "status": "pending_approval",
+        "approval_id": error.approval_id,
+        "expires_at": error.expires_at,
+    }
+
+
 class AgentStatusCache:
     """Thread-safe TTL cache for agent status responses."""
 
