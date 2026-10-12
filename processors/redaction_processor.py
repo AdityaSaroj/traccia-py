@@ -54,6 +54,9 @@ DEFAULT_SENSITIVE_KEY_FRAGMENTS: FrozenSet[str] = frozenset(
         "body",
         "query",
         "response",
+        "result",
+        "exception",
+        "error",
         "user",
         "assistant",
         "phi",
@@ -87,16 +90,28 @@ def _key_is_sensitive(key: str, fragments: Iterable[str]) -> bool:
     return any(fragment in lower for fragment in fragments)
 
 
-def redact_value(value: Any, *, redact_all_strings: bool = False, key: str = "") -> Any:
-    """Redact a single attribute value (strings only unless redact_all_strings)."""
+def redact_value(
+    value: Any,
+    *,
+    redact_all_strings: bool = False,
+    key: str = "",
+    fragments: Optional[Iterable[str]] = None,
+) -> Any:
+    """Redact a value recursively (strings only when the key is sensitive or redact_all_strings)."""
+    frags = DEFAULT_SENSITIVE_KEY_FRAGMENTS if fragments is None else fragments
     if isinstance(value, str):
-        if redact_all_strings or _key_is_sensitive(key, DEFAULT_SENSITIVE_KEY_FRAGMENTS):
+        if redact_all_strings or _key_is_sensitive(key, frags):
             return redact_string(value)
         return value
     if isinstance(value, (list, tuple)):
-        return type(value)(redact_value(v, redact_all_strings=redact_all_strings, key=key) for v in value)
+        return type(value)(
+            redact_value(v, redact_all_strings=redact_all_strings, key=key, fragments=frags) for v in value
+        )
     if isinstance(value, dict):
-        return {k: redact_value(v, redact_all_strings=redact_all_strings, key=str(k)) for k, v in value.items()}
+        return {
+            k: redact_value(v, redact_all_strings=redact_all_strings, key=str(k), fragments=frags)
+            for k, v in value.items()
+        }
     return value
 
 
@@ -117,34 +132,62 @@ def redact_attributes(
         if _key_is_allowlisted(key):
             out[key] = value
             continue
-        if isinstance(value, str) and (redact_all_strings or _key_is_sensitive(key, fragments)):
-            out[key] = redact_string(value)
-        else:
-            out[key] = redact_value(value, redact_all_strings=redact_all_strings, key=key)
+        out[key] = redact_value(value, redact_all_strings=redact_all_strings, key=key, fragments=fragments)
     out[REDACTION_APPLIED] = True
     return out
 
 
-def apply_redaction_to_span(span: Any, *, extra_key_fragments: Optional[Sequence[str]] = None) -> int:
+def apply_redaction_to_span(
+    span: Any,
+    *,
+    extra_key_fragments: Optional[Sequence[str]] = None,
+    redact_all_strings: bool = False,
+) -> int:
     """
-    Redact sensitive attributes on a mutable Traccia span (call inside @observe or before span ends).
+    Redact sensitive attributes, buffered events (including exceptions) and the error
+    status description on a mutable Traccia span (call inside @observe or before span ends).
 
-    Returns the number of attribute keys updated.
+    Returns the number of attribute keys, events and status fields updated.
     """
     if not span or not hasattr(span, "set_attribute"):
         return 0
-    raw = dict(getattr(span, "attributes", None) or {})
-    if not raw:
-        return 0
-    redacted = redact_attributes(raw, extra_key_fragments=extra_key_fragments)
     changed = 0
-    for key, value in redacted.items():
-        if key == REDACTION_APPLIED:
-            continue
-        if raw.get(key) != value:
-            span.set_attribute(key, value)
+
+    raw = dict(getattr(span, "attributes", None) or {})
+    if raw:
+        redacted = redact_attributes(
+            raw, extra_key_fragments=extra_key_fragments, redact_all_strings=redact_all_strings
+        )
+        for key, value in redacted.items():
+            if key == REDACTION_APPLIED:
+                continue
+            if raw.get(key) != value:
+                span.set_attribute(key, value)
+                changed += 1
+
+    events = getattr(span, "events", None)
+    if isinstance(events, list):
+        for event in events:
+            attrs = event.get("attributes") if isinstance(event, dict) else None
+            if not attrs:
+                continue
+            new_attrs = redact_attributes(
+                attrs, extra_key_fragments=extra_key_fragments, redact_all_strings=redact_all_strings
+            )
+            new_attrs.pop(REDACTION_APPLIED, None)
+            if new_attrs != attrs:
+                event["attributes"] = new_attrs
+                changed += 1
+
+    # Error status descriptions are exception messages: always scrub them.
+    description = getattr(span, "status_description", None)
+    if isinstance(description, str) and description:
+        new_description = redact_string(description)
+        if new_description != description:
+            span.status_description = new_description
             changed += 1
-    if changed or redacted.get(REDACTION_APPLIED):
+
+    if raw or changed:
         span.set_attribute(REDACTION_APPLIED, True)
     return changed
 
@@ -169,6 +212,7 @@ class RedactionSpanProcessor(SpanProcessor):
         apply_redaction_to_span(
             span,
             extra_key_fragments=self._extra_key_fragments,
+            redact_all_strings=self._redact_all_strings,
         )
 
 

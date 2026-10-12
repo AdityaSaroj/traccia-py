@@ -79,6 +79,10 @@ class Span:
         # This mirrors OTel span attributes
         self._attributes: Dict[str, Any] = {}
 
+        # Events (including exceptions) are buffered until end() so enrichment
+        # processors (e.g. redaction) can rewrite them before they reach OTel.
+        self._events: List[Dict[str, Any]] = []
+
     def _format_trace_state(self, trace_state) -> Optional[str]:
         """Format OTel TraceState to W3C string format."""
         if not trace_state:
@@ -137,10 +141,8 @@ class Span:
 
     @property
     def events(self) -> List[Dict[str, Any]]:
-        """Get span events (read-only)."""
-        # OTel doesn't expose events on active span
-        # Return empty list for now
-        return []
+        """Get buffered span events (mutable by enrichment processors until end)."""
+        return self._events
 
     @property
     def duration_ns(self) -> Optional[int]:
@@ -172,26 +174,31 @@ class Span:
         """Add an event to the span."""
         if self._ended:
             return
-        
-        try:
-            self._otel_span.add_event(
-                name=name,
-                attributes=attributes,
-                timestamp=timestamp_ns,
-            )
-        except Exception:
-            pass
+        self._events.append({
+            "name": name,
+            "attributes": dict(attributes) if attributes else {},
+            "timestamp_ns": timestamp_ns if timestamp_ns is not None else time.time_ns(),
+        })
 
     def record_exception(self, error: BaseException) -> None:
         """Record an exception event on the span."""
         if self._ended:
             return
-        
         try:
-            self._otel_span.record_exception(error)
+            stacktrace = "".join(
+                traceback.format_exception(type(error), error, error.__traceback__)
+            )
         except Exception:
-            pass
-        
+            stacktrace = ""
+        self.add_event(
+            "exception",
+            {
+                "exception.type": type(error).__qualname__,
+                "exception.message": str(error),
+                "exception.stacktrace": stacktrace,
+                "exception.escaped": "False",
+            },
+        )
         self.set_status(SpanStatus.ERROR, str(error))
 
     def set_status(self, status: SpanStatus, description: Optional[str] = None) -> None:
@@ -237,16 +244,37 @@ class Span:
         
         # 1. Run enrichment processors (span is still mutable)
         self.tracer._run_enrichment_processors(self)
+
+        # 2. Flush buffered events and the (possibly rewritten) status to OTel
+        self._flush_to_otel()
         
-        # 2. End the OTel span (makes it immutable)
+        # 3. End the OTel span (makes it immutable)
         try:
             self._otel_span.end(end_time=self.end_time_ns)
         except Exception:
             pass
         
-        # 3. OTel export processors run automatically on ReadableSpan
+        # 4. OTel export processors run automatically on ReadableSpan
         
         self._ended = True
+
+    def _flush_to_otel(self) -> None:
+        for event in self._events:
+            try:
+                self._otel_span.add_event(
+                    name=event.get("name", "event"),
+                    attributes=event.get("attributes") or None,
+                    timestamp=event.get("timestamp_ns"),
+                )
+            except Exception:
+                pass
+        if self.status == SpanStatus.ERROR:
+            try:
+                self._otel_span.set_status(
+                    Status(status_code=StatusCode.ERROR, description=self.status_description)
+                )
+            except Exception:
+                pass
 
     # Context manager support
     def __enter__(self) -> "Span":
