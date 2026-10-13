@@ -1,6 +1,7 @@
 """Tests for PII redaction helpers."""
 
 from traccia.processors.redaction_processor import (
+    RedactionSpanProcessor,
     apply_redaction_to_span,
     redact_attributes,
     redact_string,
@@ -168,3 +169,24 @@ def test_end_to_end_export_redacts_events_and_exceptions():
     ) + repr(exported.status.description)
     assert "x@y.io" not in dump
     assert any(e.name == "exception" for e in exported.events)
+
+
+def test_init_span_logging_runs_after_redaction():
+    from traccia import get_tracer_provider, init, stop_tracing
+    from traccia.processors.logging_processor import LoggingSpanProcessor
+
+    stop_tracing()  # other tests may leave tracing started, which makes init() a no-op
+    try:
+        init(
+            enable_patching=False,
+            auto_start_trace=False,
+            redact_pii=True,
+            enable_span_logging=True,
+            enable_metrics=False,
+        )
+        procs = get_tracer_provider()._enrichment_processors
+        redact_idx = next(i for i, p in enumerate(procs) if isinstance(p, RedactionSpanProcessor))
+        log_idx = next(i for i, p in enumerate(procs) if isinstance(p, LoggingSpanProcessor))
+        assert redact_idx < log_idx
+    finally:
+        stop_tracing()
