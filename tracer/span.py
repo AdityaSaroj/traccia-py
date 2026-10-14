@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import traceback
 from enum import Enum
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from opentelemetry.trace import Span as OTelSpan, Status, StatusCode
 from opentelemetry.trace import set_span_in_context
@@ -79,10 +79,6 @@ class Span:
         # This mirrors OTel span attributes
         self._attributes: Dict[str, Any] = {}
 
-        # Events (including exceptions) are buffered until end() so enrichment
-        # processors (e.g. redaction) can rewrite them before they reach OTel.
-        self._events: List[Dict[str, Any]] = []
-
     def _format_trace_state(self, trace_state) -> Optional[str]:
         """Format OTel TraceState to W3C string format."""
         if not trace_state:
@@ -141,8 +137,75 @@ class Span:
 
     @property
     def events(self) -> List[Dict[str, Any]]:
-        """Get buffered span events (mutable by enrichment processors until end)."""
-        return self._events
+        """Get a read-only snapshot of the events recorded on the underlying OTel span."""
+        try:
+            return [
+                {
+                    "name": ev.name,
+                    "attributes": dict(ev.attributes or {}),
+                    "timestamp_ns": ev.timestamp,
+                }
+                for ev in getattr(self._otel_span, "_events", None) or ()
+            ]
+        except Exception:
+            return []
+
+    def _rewrite_otel_events(
+        self, transform: Callable[[Dict[str, Any]], Dict[str, Any]]
+    ) -> int:
+        """
+        Replace the attributes of every event stored on the OTel span (including
+        events added via other wrappers or the raw OTel API) with ``transform(attrs)``.
+
+        Events are replaced in place, so OTel's event limits and dropped counts are
+        preserved. Must be called before the OTel span ends. Returns events changed.
+        """
+        otel_span = self._otel_span
+        events = getattr(otel_span, "_events", None)
+        dq = getattr(events, "_dq", None)
+        if dq is None:
+            return 0
+        try:
+            from opentelemetry.sdk.trace import Event
+            from opentelemetry.attributes import BoundedAttributes
+        except Exception:
+            return 0
+        limits = getattr(otel_span, "_limits", None)
+        changed = 0
+        with events._lock:
+            for i, ev in enumerate(list(dq)):
+                attrs = dict(ev.attributes or {})
+                if not attrs:
+                    continue
+                new_attrs = transform(attrs)
+                if new_attrs == attrs:
+                    continue
+                dq[i] = Event(
+                    name=ev.name,
+                    attributes=BoundedAttributes(
+                        getattr(limits, "max_event_attributes", None),
+                        new_attrs,
+                        max_value_len=getattr(limits, "max_attribute_length", None),
+                        immutable=True,
+                    ),
+                    timestamp=ev.timestamp,
+                )
+                changed += 1
+        return changed
+
+    def _rewrite_otel_status_description(self, transform: Callable[[str], str]) -> bool:
+        """Rewrite the OTel span's status description (set via any wrapper or raw OTel)."""
+        status = getattr(self._otel_span, "_status", None)
+        description = getattr(status, "description", None)
+        if not description:
+            return False
+        new_description = transform(description)
+        if new_description == description:
+            return False
+        self._otel_span._status = Status(status_code=status.status_code, description=new_description)
+        if self.status_description == description:
+            self.status_description = new_description
+        return True
 
     @property
     def duration_ns(self) -> Optional[int]:
@@ -174,31 +237,26 @@ class Span:
         """Add an event to the span."""
         if self._ended:
             return
-        self._events.append({
-            "name": name,
-            "attributes": dict(attributes) if attributes else {},
-            "timestamp_ns": timestamp_ns if timestamp_ns is not None else time.time_ns(),
-        })
+        
+        try:
+            self._otel_span.add_event(
+                name=name,
+                attributes=attributes,
+                timestamp=timestamp_ns,
+            )
+        except Exception:
+            pass
 
     def record_exception(self, error: BaseException) -> None:
         """Record an exception event on the span."""
         if self._ended:
             return
+        
         try:
-            stacktrace = "".join(
-                traceback.format_exception(type(error), error, error.__traceback__)
-            )
+            self._otel_span.record_exception(error)
         except Exception:
-            stacktrace = ""
-        self.add_event(
-            "exception",
-            {
-                "exception.type": type(error).__qualname__,
-                "exception.message": str(error),
-                "exception.stacktrace": stacktrace,
-                "exception.escaped": "False",
-            },
-        )
+            pass
+        
         self.set_status(SpanStatus.ERROR, str(error))
 
     def set_status(self, status: SpanStatus, description: Optional[str] = None) -> None:
@@ -244,37 +302,16 @@ class Span:
         
         # 1. Run enrichment processors (span is still mutable)
         self.tracer._run_enrichment_processors(self)
-
-        # 2. Flush buffered events and the (possibly rewritten) status to OTel
-        self._flush_to_otel()
         
-        # 3. End the OTel span (makes it immutable)
+        # 2. End the OTel span (makes it immutable)
         try:
             self._otel_span.end(end_time=self.end_time_ns)
         except Exception:
             pass
         
-        # 4. OTel export processors run automatically on ReadableSpan
+        # 3. OTel export processors run automatically on ReadableSpan
         
         self._ended = True
-
-    def _flush_to_otel(self) -> None:
-        for event in self._events:
-            try:
-                self._otel_span.add_event(
-                    name=event.get("name", "event"),
-                    attributes=event.get("attributes") or None,
-                    timestamp=event.get("timestamp_ns"),
-                )
-            except Exception:
-                pass
-        if self.status == SpanStatus.ERROR:
-            try:
-                self._otel_span.set_status(
-                    Status(status_code=StatusCode.ERROR, description=self.status_description)
-                )
-            except Exception:
-                pass
 
     # Context manager support
     def __enter__(self) -> "Span":

@@ -136,25 +136,29 @@ def test_redaction_covers_events_exceptions_and_status():
     assert span.status_description == "bad [REDACTED_EMAIL]"
 
 
-def test_end_to_end_export_redacts_events_and_exceptions():
-    from opentelemetry.sdk.trace import TracerProvider as OTelTracerProvider
+def _provider_with_memory_exporter(**processor_kwargs):
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-    from traccia.processors.redaction_processor import RedactionSpanProcessor
     from traccia.tracer.provider import TracerProvider
 
     provider = TracerProvider()
-    provider.add_span_processor(RedactionSpanProcessor(redact_all_strings=True))
+    provider.add_span_processor(RedactionSpanProcessor(**processor_kwargs))
     exporter = InMemorySpanExporter()
-    otel_provider = getattr(provider, "_otel_provider", None)
-    if not isinstance(otel_provider, OTelTracerProvider):
-        import pytest
+    provider._otel_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    return provider.get_tracer("test"), exporter
 
-        pytest.skip("provider does not expose an OTel SDK provider")
-    otel_provider.add_span_processor(SimpleSpanProcessor(exporter))
 
-    tracer = provider.get_tracer("test")
+def _dump(exported):
+    return (
+        repr(dict(exported.attributes))
+        + repr([(e.name, dict(e.attributes or {})) for e in exported.events])
+        + repr(exported.status.description)
+    )
+
+
+def test_end_to_end_export_redacts_events_and_exceptions():
+    tracer, exporter = _provider_with_memory_exporter(redact_all_strings=True)
     try:
         with tracer.start_as_current_span("op") as span:
             span.set_attribute("opaque", "x@y.io")
@@ -164,11 +168,58 @@ def test_end_to_end_export_redacts_events_and_exceptions():
         pass
 
     (exported,) = exporter.get_finished_spans()
-    dump = repr(dict(exported.attributes)) + repr(
-        [(e.name, dict(e.attributes or {})) for e in exported.events]
-    ) + repr(exported.status.description)
-    assert "x@y.io" not in dump
-    assert any(e.name == "exception" for e in exported.events)
+    assert "x@y.io" not in _dump(exported)
+    assert [e.name for e in exported.events] == ["custom", "exception"]
+
+
+def test_current_span_wrapper_events_are_exported_and_redacted():
+    from traccia.context.context import get_current_span
+
+    tracer, exporter = _provider_with_memory_exporter(redact_all_strings=True)
+    with tracer.start_as_current_span("op"):
+        current = get_current_span()
+        current.add_event("custom", {"payload": "x@y.io"})
+        current.record_exception(ValueError("bad x@y.io"))
+
+    (exported,) = exporter.get_finished_spans()
+    assert [e.name for e in exported.events] == ["custom", "exception"]
+    assert "x@y.io" not in _dump(exported)
+
+
+def test_native_otel_events_and_status_are_redacted():
+    from opentelemetry import trace as otel_trace
+    from opentelemetry.trace import StatusCode
+
+    tracer, exporter = _provider_with_memory_exporter(redact_all_strings=True)
+    with tracer.start_as_current_span("op"):
+        native = otel_trace.get_current_span()
+        native.record_exception(ValueError("bad x@y.io"))
+        native.add_event("native", {"payload": "x@y.io"})
+        native.set_status(StatusCode.ERROR, "bad x@y.io")
+
+    (exported,) = exporter.get_finished_spans()
+    assert [e.name for e in exported.events] == ["exception", "native"]
+    assert "x@y.io" not in _dump(exported)
+
+
+def test_nested_values_inherit_parent_key_sensitivity():
+    out = redact_attributes({"result": {"answer": "x@y.io", "items": [{"v": "x@y.io"}]}, "opaque": {"v": "x@y.io"}})
+    assert "x@y.io" not in repr(out["result"])
+    assert out["opaque"] == {"v": "x@y.io"}
+
+
+def test_otel_event_limits_are_preserved(monkeypatch):
+    monkeypatch.setenv("OTEL_SPAN_EVENT_COUNT_LIMIT", "2")
+    tracer, exporter = _provider_with_memory_exporter(redact_all_strings=True)
+    with tracer.start_as_current_span("op") as span:
+        for i in range(1000):
+            span.add_event("e", {"payload": f"user{i}@y.io"})
+        assert len(span.events) == 2
+
+    (exported,) = exporter.get_finished_spans()
+    assert len(exported.events) == 2
+    assert exported.dropped_events == 998
+    assert "@y.io" not in _dump(exported)
 
 
 def test_init_span_logging_runs_after_redaction():

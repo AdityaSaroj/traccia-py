@@ -96,20 +96,27 @@ def redact_value(
     redact_all_strings: bool = False,
     key: str = "",
     fragments: Optional[Iterable[str]] = None,
+    _sensitive: bool = False,
 ) -> Any:
-    """Redact a value recursively (strings only when the key is sensitive or redact_all_strings)."""
+    """Redact a value recursively.
+
+    Strings are redacted when ``redact_all_strings`` is set or when their key, or any
+    ancestor key, is sensitive (so ``{"result": {"answer": ...}}`` is covered).
+    """
     frags = DEFAULT_SENSITIVE_KEY_FRAGMENTS if fragments is None else fragments
+    sensitive = _sensitive or redact_all_strings or _key_is_sensitive(key, frags)
     if isinstance(value, str):
-        if redact_all_strings or _key_is_sensitive(key, frags):
-            return redact_string(value)
-        return value
+        return redact_string(value) if sensitive else value
     if isinstance(value, (list, tuple)):
         return type(value)(
-            redact_value(v, redact_all_strings=redact_all_strings, key=key, fragments=frags) for v in value
+            redact_value(v, redact_all_strings=redact_all_strings, key=key, fragments=frags, _sensitive=sensitive)
+            for v in value
         )
     if isinstance(value, dict):
         return {
-            k: redact_value(v, redact_all_strings=redact_all_strings, key=str(k), fragments=frags)
+            k: redact_value(
+                v, redact_all_strings=redact_all_strings, key=str(k), fragments=frags, _sensitive=sensitive
+            )
             for k, v in value.items()
         }
     return value
@@ -144,7 +151,7 @@ def apply_redaction_to_span(
     redact_all_strings: bool = False,
 ) -> int:
     """
-    Redact sensitive attributes, buffered events (including exceptions) and the error
+    Redact sensitive attributes, span events (including exceptions) and the error
     status description on a mutable Traccia span (call inside @observe or before span ends).
 
     Returns the number of attribute keys, events and status fields updated.
@@ -165,21 +172,32 @@ def apply_redaction_to_span(
                 span.set_attribute(key, value)
                 changed += 1
 
-    events = getattr(span, "events", None)
-    if isinstance(events, list):
-        for event in events:
-            attrs = event.get("attributes") if isinstance(event, dict) else None
-            if not attrs:
-                continue
-            new_attrs = redact_attributes(
-                attrs, extra_key_fragments=extra_key_fragments, redact_all_strings=redact_all_strings
-            )
-            new_attrs.pop(REDACTION_APPLIED, None)
-            if new_attrs != attrs:
-                event["attributes"] = new_attrs
-                changed += 1
+    def _redact_event_attrs(attrs: Dict[str, Any]) -> Dict[str, Any]:
+        out = redact_attributes(
+            attrs, extra_key_fragments=extra_key_fragments, redact_all_strings=redact_all_strings
+        )
+        out.pop(REDACTION_APPLIED, None)
+        return out
 
-    # Error status descriptions are exception messages: always scrub them.
+    if hasattr(span, "_rewrite_otel_events"):
+        # Traccia span: rewrite events stored on the OTel span itself, so events added
+        # through any wrapper or the raw OTel API are covered and OTel limits still apply.
+        changed += span._rewrite_otel_events(_redact_event_attrs)
+        # Error status descriptions are exception messages: always scrub them.
+        if span._rewrite_otel_status_description(redact_string):
+            changed += 1
+    else:
+        events = getattr(span, "events", None)
+        if isinstance(events, list):
+            for event in events:
+                attrs = event.get("attributes") if isinstance(event, dict) else None
+                if not attrs:
+                    continue
+                new_attrs = _redact_event_attrs(attrs)
+                if new_attrs != attrs:
+                    event["attributes"] = new_attrs
+                    changed += 1
+
     description = getattr(span, "status_description", None)
     if isinstance(description, str) and description:
         new_description = redact_string(description)
